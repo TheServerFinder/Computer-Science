@@ -1,48 +1,46 @@
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
+from sklearn.cluster import KMeans
+from collections import Counter
 
-def image_to_grid_print(image_path, grid_width, grid_height, image_width, image_height):
-    # Open the image
+def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
     with Image.open(image_path) as img:
-        # Convert image to RGB mode if it's not
-        img = img.convert('RGB')
+        img = img.convert('RGB')  
         
-        # Resize the image to the specified dimensions, using LANCZOS for better quality
-        img = img.resize((image_width, image_height), Image.LANCZOS)  # Changed to LANCZOS for better color preservation
+        # Calculate size of each segment
+        segment_width = img.width // grid_width
+        segment_height = img.height // grid_height
 
-        # Calculate the size of each block
-        block_width = image_width // grid_width
-        block_height = image_height // grid_height
-
-        # Prepare a list to hold the rows of colors
         color_rows = []
-
-        # Loop through the grid
         for i in range(grid_height):
-            row_colors = []  # List to hold colors for the current row
+            row_colors = []
             for j in range(grid_width):
-                # Define the boundaries of each block
-                left = j * block_width
-                top = i * block_height
-                right = (j + 1) * block_width if j < grid_width - 1 else image_width
-                bottom = (i + 1) * block_height if i < grid_height - 1 else image_height
+                left = j * segment_width
+                top = i * segment_height
+                right = left + segment_width if j < grid_width - 1 else img.width
+                bottom = top + segment_height if i < grid_height - 1 else img.height
 
-                # Crop the image to get the block
+                # Crop the image block
                 block = img.crop((left, top, right, bottom))
+                block_array = np.array(block).reshape(-1, 3)
 
-                # Convert to numpy array for easier manipulation
-                block_array = np.array(block)
+                if len(set(map(tuple, block_array))) > n_colors:  
+                    # Use K-means clustering to reduce colors
+                    kmeans = KMeans(n_clusters=n_colors, random_state=0).fit(block_array)
+                    labels = kmeans.labels_
+                    centers = kmeans.cluster_centers_.astype(np.uint8)
+                    block_reduced = centers[labels].reshape(block_array.shape)
+                else:
+                    block_reduced = block_array  
 
-                # Calculate median color for better color representation
-                median_color = np.median(block_array.reshape(-1, 3), axis=0).astype(np.uint8)
+                # Choose the most common color from the reduced set
+                color_counts = Counter(map(tuple, block_reduced))
+                chosen_color = max(color_counts, key=color_counts.get)
 
-                # Convert median color to hex format, ensuring consistent formatting
-                hex_color = "#{:02x}{:02x}{:02x}".format(*median_color)
-
-                # Append the hex color to the current row
+                hex_color = "#{:02x}{:02x}{:02x}".format(*chosen_color)
+                # Format the hex color string with quotes for consistency with your desired output
                 row_colors.append(f'"{hex_color}"')
 
-            # Append the current row to the list of color rows
             color_rows.append(row_colors)
 
         # Print the formatted output
@@ -53,8 +51,6 @@ def image_to_grid_print(image_path, grid_width, grid_height, image_width, image_
 
 # Example usage
 image_path = 'Umbreon.jpg'
-grid_width = 32  # Number of blocks wide
+grid_width = 32  # Number of blocks wide    
 grid_height = 32  # Number of blocks high
-image_width = 695  # Desired width of the image
-image_height = 695  # Desired height of the image
-image_to_grid_print(image_path, grid_width, grid_height, image_width, image_height)
+image_to_grid_print(image_path, grid_width, grid_height, n_colors=3)  # Using 3 colors per block
