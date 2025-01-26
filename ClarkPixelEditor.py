@@ -1,9 +1,8 @@
-
 from PIL import Image, ImageDraw, ImageTk
 import numpy as np
 from sklearn.cluster import KMeans
 from collections import Counter
-from tkinter import Tk, Label, Button, Canvas, colorchooser, simpledialog, messagebox, filedialog, Toplevel, Text, Scrollbar, StringVar, Entry, Frame, IntVar, Checkbutton
+from tkinter import Tk, Toplevel, Menu, Label, Button, Canvas, colorchooser, simpledialog, messagebox, filedialog, Text, StringVar, Entry, Frame, IntVar, Checkbutton, LEFT, BOTTOM, RIGHT, X, Y, BOTH, Scale, Listbox, HORIZONTAL, END, ttk
 import json
 import cv2
 
@@ -40,25 +39,6 @@ def remove_grid(image):
     result = cv2.inpaint(img_array, mask[:,:,0], 5, cv2.INPAINT_TELEA)  # Increased radius for inpainting
     
     return Image.fromarray(result)
-    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-    # Apply thresholding to create a binary image
-    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-    
-    # Detect lines using Hough Line Transform
-    lines = cv2.HoughLinesP(binary, 1, np.pi/180, threshold=200, minLineLength=50, maxLineGap=10)
-    
-    if lines is None:
-        return image  # No lines detected, return original image
-
-    # Create a mask for lines
-    mask = np.zeros_like(np.array(image))
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        cv2.line(mask, (x1, y1), (x2, y2), (255, 255, 255), 1)
-
-    # Remove lines from the original image
-    result = cv2.inpaint(np.array(image), mask[:,:,0], 3, cv2.INPAINT_TELEA)
-    return Image.fromarray(result)
 
 def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
     with Image.open(image_path) as img:
@@ -67,7 +47,7 @@ def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
         # Remove grid if exists
         img = remove_grid(img)
         
-        # Resize image to match grid size for better quality
+        # Resize image to match grid size for better quality, using LANCZOS
         desired_size = (grid_width * 20, grid_height * 20)
         img = img.resize(desired_size, Image.LANCZOS)
 
@@ -96,94 +76,6 @@ def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
         for y, row in enumerate(color_rows):
             for x, color in enumerate(row):
                 r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
-
-        return new_img, color_rows
-
-def quantize_colors(block_array, n_colors):
-    kmeans = KMeans(n_clusters=n_colors, random_state=0).fit(block_array)
-    centroids = kmeans.cluster_centers_.astype(np.uint8)
-    labels = kmeans.predict(block_array)
-    return centroids[labels]
-    with Image.open(image_path) as img:
-        img = img.convert('RGB')
-        img = img.resize((grid_width * 20, grid_height * 20), Image.LANCZOS)
-        
-        segment_width = img.width / grid_width
-        segment_height = img.height / grid_height
-
-        color_rows = []
-        for i in range(grid_height):
-            row_colors = []
-            for j in range(grid_width):
-                left = int(j * segment_width)
-                top = int(i * segment_height)
-                right = left + 20 if j < grid_width - 1 else img.width
-                bottom = top + 20 if i < grid_height - 1 else img.height
-
-                block = img.crop((left, top, right, bottom))
-                avg_color = np.mean(np.array(block), axis=(0, 1))
-                hex_color = "#{:02x}{:02x}{:02x}".format(int(avg_color[0]), int(avg_color[1]), int(avg_color[2]))
-                row_colors.append(hex_color)
-
-            color_rows.append(row_colors)
-
-        new_img = Image.new('RGB', (grid_width * 20, grid_height * 20))
-        draw = ImageDraw.Draw(new_img)
-        
-        for y, row in enumerate(color_rows):
-            for x, color in enumerate(row):
-                r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
-
-        return new_img, color_rows
-    with Image.open(image_path) as img:
-        img = img.convert('RGB')
-        
-        # Apply dithering to preserve detail
-        img = ImageOps.posterize(img, n_colors)
-        img = ImageOps.dither(img, 1)
-        
-        # Resize image to match grid size for better quality
-        desired_size = (grid_width * 20, grid_height * 20)
-        img = img.resize(desired_size, Image.LANCZOS)
-
-        segment_width = img.width / grid_width
-        segment_height = img.height / grid_height
-
-        color_rows = []
-        for i in range(grid_height):
-            row_colors = []
-            for j in range(grid_width):
-                left = int(j * segment_width)
-                top = int(i * segment_height)
-                right = int((j + 1) * segment_width) if j < grid_width - 1 else img.width
-                bottom = int((i + 1) * segment_height) if i < grid_height - 1 else img.height
-
-                block = img.crop((left, top, right, bottom))
-                block_array = np.array(block).reshape(-1, 3)
-
-                if len(set(map(tuple, block_array))) > n_colors:
-                    block_reduced = quantize_colors(block_array, n_colors)
-                else:
-                    block_reduced = block_array
-
-                color_counts = Counter(map(tuple, block_reduced))
-                chosen_color = max(color_counts, key=color_counts.get)
-
-                hex_color = "#{:02x}{:02x}{:02x}".format(*chosen_color)
-                row_colors.append(hex_color)
-
-            color_rows.append(row_colors)
-
-        new_img = Image.new('RGB', (grid_width * 20, grid_height * 20))
-        draw = ImageDraw.Draw(new_img)
-        
-        for y, row in enumerate(color_rows):
-            for x, color in enumerate(row):
-                r = int(color[1:3], 16)
-                g = int(color[3:5], 16)
-                b = int(color[5:7], 16)
                 draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
 
         return new_img, color_rows
@@ -192,8 +84,71 @@ class VisualEditor:
     def __init__(self):
         self.root = Tk()
         self.root.title("Clarks Advanced Pixel Editor")
+        self.root.resizable(True, True)
+        self.zoom_scale = 1.0
+        self.zoom_speed = 0.1
+        self.undo_stack = []
+        self.redo_stack = []
+        self.layers = []  # Initialize as empty list
+        self.current_layer = 0
+
         self.root.withdraw()
+        self.setup_menu()
         self.setup_initial_ui()
+
+
+    def setup_menu(self):
+        menubar = Menu(self.root)
+        filemenu = Menu(menubar, tearoff=0)
+        filemenu.add_command(label="New", command=self.new_project)
+        filemenu.add_command(label="Print Hex Grid", command=self.print_hex_grid)
+        filemenu.add_command(label="Load Image", command=self.import_image)
+        filemenu.add_command(label="Save Image", command=self.save_image)
+        filemenu.add_command(label="Load JSON", command=self.load_changes)
+        filemenu.add_command(label="Save JSON", command=self.save_changes)
+        menubar.add_cascade(label="File", menu=filemenu)
+        
+        self.root.config(menu=menubar)
+        
+    def new_project(self):
+        # This method would reset the editor to a new state
+        self.root.withdraw()
+        self.setup_initial_ui()  # This would prompt for new grid size
+        self.root.deiconify()
+
+    def open_project(self):
+        # This method would open a previously saved project
+        file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
+        if file_path:
+            with open(file_path, 'r') as file:
+                self.layers = json.load(file)
+                # Assuming the loaded data is structured as a list of layers
+                self.current_layer = 0
+                self.update_image()
+
+    def export_image(self):
+        # This method would handle exporting the image in different formats
+        file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg"), ("GIF files", "*.gif")])
+        if file_path:
+            combined_grid = self.combine_layers()
+            current_image = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20))
+            draw = ImageDraw.Draw(current_image)
+            for y, row in enumerate(combined_grid):
+                for x, color in enumerate(row):
+                    r = int(color[1:3], 16)
+                    g = int(color[3:5], 16)
+                    b = int(color[5:7], 16)
+                    draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
+            
+            if file_path.endswith('.png'):
+                current_image.save(file_path, "PNG")
+            elif file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
+                quality = simpledialog.askinteger("Quality", "Enter JPEG quality (1-95):", minvalue=1, maxvalue=95, initialvalue=90)
+                if quality:
+                    current_image.save(file_path, "JPEG", quality=quality)
+            elif file_path.endswith('.gif'):
+                current_image.save(file_path, "GIF")
+
 
     def setup_initial_ui(self):
         self.size_window = Toplevel(self.root)
@@ -214,6 +169,58 @@ class VisualEditor:
         self.size_window.configure(bg='#2B2B2B')
         self.root.wait_window(self.size_window)
 
+    def center_window(self, window):
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        window_width = window.winfo_reqwidth()
+        window_height = window.winfo_reqheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        window.geometry(f"+{x}+{y}")
+
+    def run(self):
+        self.root.mainloop()
+
+    def on_mousewheel(self, event):
+        # Adjust zoom based on mouse wheel scroll
+        old_scale = self.zoom_scale
+        if event.delta > 0:
+            self.zoom_scale += self.zoom_speed
+        else:
+            self.zoom_scale = max(0.1, self.zoom_scale - self.zoom_speed)  # Prevent zoom scale from going to zero
+        
+        # Update canvas size based on new zoom level
+        max_size = 800
+        canvas_width = min(int(self.grid_width * 20 * self.zoom_scale), max_size)
+        canvas_height = min(int(self.grid_height * 20 * self.zoom_scale), max_size)
+        self.canvas.config(width=canvas_width, height=canvas_height)
+
+        # Center zoom on mouse position
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        scale_factor = self.zoom_scale / old_scale
+        self.canvas.scale("all", x, y, scale_factor, scale_factor)
+        self.update_image()
+
+
+    def save_image(self):
+        file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg")])
+        if file_path:
+            current_image = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20))
+            draw = ImageDraw.Draw(current_image)
+            for y, row in enumerate(self.hex_grid):
+                for x, color in enumerate(row):
+                    r = int(color[1:3], 16)
+                    g = int(color[3:5], 16)
+                    b = int(color[5:7], 16)
+                    draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
+            
+            if file_path.endswith('.png'):
+                current_image.save(file_path, "PNG")
+            elif file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
+                quality = simpledialog.askinteger("Quality", "Enter JPEG quality (1-95):", minvalue=1, maxvalue=95, initialvalue=90)
+                if quality:
+                    current_image.save(file_path, "JPEG", quality=quality)
+
     def confirm_size(self):
         try:
             width = int(self.width_var.get())
@@ -222,10 +229,13 @@ class VisualEditor:
                 self.grid_width = width
                 self.grid_height = height
                 self.n_colors = 5  # Default number of colors for clustering
-                
-                self.hex_grid = self.create_blank_grid()
+                    
+                # Create a blank grid for the first layer
+                self.layers = [self.create_blank_grid()]
+                self.current_layer = 0
                 self.setup_gui()
-                
+                self.layer_tree.insert('', 'end', iid=str(self.current_layer), text="Layer 0")
+                    
                 self.draw_color = "#000000"
                 self.drawing = False
                 self.tool = None
@@ -240,94 +250,220 @@ class VisualEditor:
     def create_blank_grid(self):
         return [["#FFFFFF" for _ in range(self.grid_width)] for _ in range(self.grid_height)]
 
-    def create_blank_grid(self):
-        return [["#FFFFFF" for _ in range(self.grid_width)] for _ in range(self.grid_height)]
-
     def setup_gui(self):
         self.root.configure(bg='#2B2B2B')
         
-        border_frame = Frame(self.root, bg='#2B2B2B', padx=40, pady=40)
-        border_frame.pack(fill='both', expand=True)
+        main_frame = Frame(self.root, bg='#2B2B2B')
+        main_frame.pack(fill=BOTH, expand=True)
+
+        canvas_frame = Frame(main_frame, bg='white')
+        canvas_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=10, pady=10)
         
-        inner_frame = Frame(border_frame, bg='white')
-        inner_frame.pack(fill='both', expand=True)
+        max_size = 800
+        canvas_width = min(int(self.grid_width * 20 * self.zoom_scale), max_size)
+        canvas_height = min(int(self.grid_height * 20 * self.zoom_scale), max_size)
         
-        self.canvas = Canvas(inner_frame, width=self.grid_width * 20, height=self.grid_height * 20, bg='white', highlightthickness=0)
-        self.canvas.pack(fill='both', expand=True)
+        self.canvas = Canvas(canvas_frame, width=canvas_width, height=canvas_height, bg='white', highlightthickness=0)
+        self.canvas.pack(fill=BOTH, expand=True)
         
+        # Define side_panel here
+        side_panel = Frame(main_frame, bg='#2B2B2B', width=200)
+        side_panel.pack(side=LEFT, fill=Y)
+
+        # Opacity Slider
+        opacity_frame = Frame(side_panel, bg='#2B2B2B')
+        self.opacity_slider = Scale(opacity_frame, from_=0, to=100, orient=HORIZONTAL, label="Opacity", bg='#2B2B2B', fg='white')
+        self.opacity_slider.pack()
+        opacity_frame.pack()
+
+        # Now you can call update_image since self.opacity_slider is defined
         self.update_image()
         
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<Button-3>", self.on_right_click)
         self.canvas.bind("<B1-Motion>", self.on_draw)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
-        
-        self.color_label = Label(self.root, text="Color Picked: ", fg='white', bg='#2B2B2B')
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)
+
+        # Rest of the setup_gui code
+        self.color_label = Label(side_panel, text="Color Picked: ", fg='white', bg='#2B2B2B')
         self.color_label.pack()
-        
-        control_frame = Frame(self.root, bg='#2B2B2B')
-        Button(control_frame, text="Print Hex Grid", command=self.print_hex_grid, fg='white', bg='#2B2B2B').pack(side="left")
-        Button(control_frame, text="Save Changes", command=self.save_changes, fg='white', bg='#2B2B2B').pack(side="left")
-        Button(control_frame, text="Load Changes", command=self.load_changes, fg='white', bg='#2B2B2B').pack(side="left")
-        Button(control_frame, text="Import Image", command=self.import_image, fg='white', bg='#2B2B2B').pack(side="left")
+
+        control_frame = Frame(side_panel, bg='#2B2B2B')
+        Button(control_frame, text="Undo", command=self.undo_action, fg='white', bg='#2B2B2B').pack(side="top", fill=X)
+        Button(control_frame, text="Redo", command=self.redo_action, fg='white', bg='#2B2B2B').pack(side="top", fill=X)
         control_frame.pack()
-        
-        tool_frame = Frame(self.root, bg='#2B2B2B')
-        self.pencil_button = Button(tool_frame, text="Pencil", command=lambda: self.set_tool("pencil"), fg='white', bg='#2B2B2B')
-        self.pencil_button.pack(side="left")
-        self.erase_button = Button(tool_frame, text="Erase", command=lambda: self.set_tool("erase"), fg='white', bg='#2B2B2B')
-        self.erase_button.pack(side="left")
+
+        tool_frame = Frame(side_panel, bg='#2B2B2B')
+        self.pencil_button = Button(tool_frame, text="✏️", command=lambda: self.set_tool("pencil"), fg='white', bg='#2B2B2B')
+        self.pencil_button.pack(fill=X)
+        self.erase_button = Button(tool_frame, text="🧹", command=lambda: self.set_tool("erase"), fg='white', bg='#2B2B2B')
+        self.erase_button.pack(fill=X)
         tool_frame.pack()
-        
-        color_frame = Frame(self.root, bg='#2B2B2B')
-        Button(color_frame, text="Choose Color", command=self.choose_color, fg='white', bg='#2B2B2B').pack(side="left")
+
+        color_frame = Frame(side_panel, bg='#2B2B2B')
+        Button(color_frame, text="Choose Color", command=self.choose_color, fg='white', bg='#2B2B2B').pack(fill=X)
         color_frame.pack()
 
-    def update_image(self):
-        new_img = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20), color='white')
-        draw = ImageDraw.Draw(new_img)
+        # Layer Management with Single-Click Layer Switching
+        layer_frame = Frame(side_panel, bg='#2B2B2B')
+        Button(layer_frame, text="Add Layer", command=self.add_layer, fg='white', bg='#2B2B2B').pack(fill=X)
         
-        for y, row in enumerate(self.hex_grid):
-            for x, color in enumerate(row):
-                r = int(color[1:3], 16)
-                g = int(color[3:5], 16)
-                b = int(color[5:7], 16)
-                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b), outline=None)
+        self.layer_tree = ttk.Treeview(layer_frame, columns=('Layer Name',), show='tree')
+        self.layer_tree.heading('#0', text='Layer Name', anchor='w')
+        self.layer_tree.pack(fill=BOTH, expand=True)
         
-        self.photo = ImageTk.PhotoImage(new_img)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+        # Bind single-click event for layer switching
+        self.layer_tree.bind('<Button-1>', self.on_layer_click)
         
-        # Convert to PhotoImage for Tkinter
-        self.photo = ImageTk.PhotoImage(new_img)
+        layer_frame.pack()
+
+    def on_layer_click(self, event):
+        item = self.layer_tree.identify_row(event.y)
+        if item:
+            self.current_layer = int(item)
+            self.layer_tree.selection_set(item)
+            self.update_image()
+
+
+    def update_image_toggle(self):
+        show_all_layers = bool(self.show_all_layers_var.get())
+        self.update_image(show_all_layers)
+
+    def update_image(self, show_all_layers=False):
+        print(f"Updating Image for Layer: {self.current_layer}")
+        if show_all_layers:
+            base_img = Image.new('RGBA', (int(self.grid_width * 20), int(self.grid_height * 20)), color=(0, 0, 0, 0))
+            for layer_index, layer in enumerate(self.layers):
+                opacity = self.opacity_slider.get() if layer_index == self.current_layer else 100
+                layer_img = Image.new('RGBA', (int(self.grid_width * 20), int(self.grid_height * 20)))
+                draw = ImageDraw.Draw(layer_img)
+                
+                for y, row in enumerate(layer):
+                    for x, color in enumerate(row):
+                        r = int(color[1:3], 16)
+                        g = int(color[3:5], 16)
+                        b = int(color[5:7], 16)
+                        alpha = int((opacity / 100.0) * 255)
+                        draw.rectangle([x * 20, y * 20, (x + 1) * 20, (y + 1) * 20], fill=(r, g, b, alpha))
+                
+                base_img = Image.alpha_composite(base_img, layer_img)
+        else:
+            # Only draw the current layer
+            base_img = Image.new('RGBA', (int(self.grid_width * 20), int(self.grid_height * 20)), color=(0, 0, 0, 0))
+            current_layer = self.layers[self.current_layer]
+            draw = ImageDraw.Draw(base_img)
+            for y, row in enumerate(current_layer):
+                for x, color in enumerate(row):
+                    r = int(color[1:3], 16)
+                    g = int(color[3:5], 16)
+                    b = int(color[5:7], 16)
+                    draw.rectangle([x * 20, y * 20, (x + 1) * 20, (y + 1) * 20], fill=(r, g, b))
+
+        scaled_img = base_img.resize((int(self.grid_width * 20 * self.zoom_scale), int(self.grid_height * 20 * self.zoom_scale)), Image.LANCZOS)
+        self.photo = ImageTk.PhotoImage(scaled_img)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
 
-    def on_click(self, event):
-        x, y = event.x // 20, event.y // 20
-        if 0 <= x < self.grid_width and 0 <= y < self.grid_height:
-            self.current_x, self.current_y = x, y
-            if hasattr(self, 'tool') and self.tool == "pencil":
-                self.hex_grid[y][x] = self.draw_color
-                self.update_image()
-            elif hasattr(self, 'tool') and self.tool == "erase":
-                self.hex_grid[y][x] = "#FFFFFF"  # Assuming white for erase
-                self.update_image()
-            else:
-                current_color = self.hex_grid[y][x]
-                self.open_hex_menu(current_color)
+    def combine_layers(self):
+        # Simple layer combining logic
+        if len(self.layers) == 1:
+            return self.layers[0]
+        # Here you would implement logic to combine layers based on their opacity
+        # For simplicity, we'll just return the top layer
+        return self.layers[self.current_layer]
+
+    def undo_action(self):
+        if self.undo_stack:
+            self.redo_stack.append(self.layers)
+            self.layers = self.undo_stack.pop()
+            self.update_image()
+
+    def redo_action(self):
+        if self.redo_stack:
+            self.undo_stack.append(self.layers)
+            self.layers = self.redo_stack.pop()
+            self.update_image()
+
+    def add_layer(self):
+        new_layer = self.create_blank_grid()
+        self.layers.append(new_layer)
+        new_layer_index = len(self.layers) - 1
+        layer_name = f"Layer {new_layer_index}"
+        self.layer_tree.insert('', 'end', iid=str(new_layer_index), text=layer_name)
+        self.current_layer = new_layer_index
+        self.update_image()
+
+    def start_drag(self, event):
+        item = self.layer_tree.identify_row(event.y)
+        if item:
+            self.dragged_item = item
+            self.drag_start_y = event.y
+
+
+    def dragging(self, event):
+        if self.dragged_item:
+            delta_y = event.y - self.drag_start_y
+            if delta_y < 0:
+                prev = self.layer_tree.prev(self.dragged_item)
+                if prev:
+                    self.layer_tree.move(self.dragged_item, '', self.layer_tree.index(prev))
+            elif delta_y > 0:
+                next_item = self.layer_tree.next(self.dragged_item)
+                if next_item:
+                    self.layer_tree.move(self.dragged_item, '', self.layer_tree.index(next_item) + 1)
+            self.drag_start_y = event.y
+
+
+    def stop_drag(self, event):
+        if self.dragged_item:
+            # Update layers list based on the new order in Treeview
+            new_order = list(self.layer_tree.get_children())
+            self.layers = [self.layers[self.layer_tree.index(layer)] for layer in new_order]
+            self.dragged_item = None
+            self.update_image()
+
+    def rename_layer(self, event):
+        item = self.layer_tree.selection()[0] if self.layer_tree.selection() else None
+        if item:
+            current_name = self.layer_tree.item(item, 'text')
+            new_name = simpledialog.askstring("Rename Layer", "Enter new name for the layer:", initialvalue=current_name)
+            if new_name:
+                self.layer_tree.item(item, text=new_name)
 
     def on_draw(self, event):
-        x, y = event.x // 20, event.y // 20
+        print(f"Drawing on Layer: {self.current_layer}")
+        x, y = self.get_grid_coordinates(event)
         if 0 <= x < self.grid_width and 0 <= y < self.grid_height:
-            if hasattr(self, 'tool') and self.tool == "pencil":
-                self.hex_grid[y][x] = self.draw_color
+            if hasattr(self, 'tool') and self.tool == "pencil" and 0 <= self.current_layer < len(self.layers):
+                self.layers[self.current_layer][y][x] = self.draw_color
                 self.drawing = True
                 self.update_image()
-            elif hasattr(self, 'tool') and self.tool == "erase":
-                self.hex_grid[y][x] = "#FFFFFF"
+            elif hasattr(self, 'tool') and self.tool == "erase" and 0 <= self.current_layer < len(self.layers):
+                self.layers[self.current_layer][y][x] = "#FFFFFF"
                 self.drawing = True
                 self.update_image()
+
+    def on_click(self, event):
+        print(f"Clicking on Layer: {self.current_layer}")
+        x, y = self.get_grid_coordinates(event)
+        if 0 <= x < self.grid_width and 0 <= y < self.grid_height:
+            self.current_x, self.current_y = x, y
+            if hasattr(self, 'tool') and self.tool == "pencil" and 0 <= self.current_layer < len(self.layers):
+                self.layers[self.current_layer][y][x] = self.draw_color
+                self.update_image()
+            elif hasattr(self, 'tool') and self.tool == "erase" and 0 <= self.current_layer < len(self.layers):
+                self.layers[self.current_layer][y][x] = "#FFFFFF"  # Assuming white for erase
+                self.update_image()
+            else:
+                if 0 <= self.current_layer < len(self.layers):
+                    current_color = self.layers[self.current_layer][y][x]
+                    self.open_hex_menu(current_color)
+
+    def get_grid_coordinates(self, event):
+        x = int(self.canvas.canvasx(event.x) / (20 * self.zoom_scale))
+        y = int(self.canvas.canvasy(event.y) / (20 * self.zoom_scale))
+        return x, y
 
     def on_release(self, event):
         self.drawing = False
@@ -375,7 +511,7 @@ class VisualEditor:
             if len(new_hex) == 7 and new_hex[0] == '#':
                 try:
                     int(new_hex[1:], 16)
-                    self.hex_grid[self.current_y][self.current_x] = new_hex.upper()
+                    self.layers[self.current_layer][self.current_y][self.current_x] = new_hex.upper()
                     self.update_image()
                     hex_window.destroy()
                 except ValueError:
@@ -450,7 +586,7 @@ class VisualEditor:
         scrollbar.pack(side="right", fill="y")
         
         text.insert("1.0", "{")
-        for row in self.hex_grid:
+        for row in self.layers[self.current_layer]:
             formatted_row = '            {' + ', '.join([f'"{color}"' for color in row]) + '},'
             text.insert("end", f"\n{formatted_row}")
         text.insert("end", "\n};")
@@ -459,75 +595,57 @@ class VisualEditor:
         file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
         if file_path:
             with open(file_path, 'w') as file:
-                json.dump(self.hex_grid, file)
+                json.dump(self.layers[self.current_layer], file)
 
     def load_changes(self):
         file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
         if file_path:
             with open(file_path, 'r') as file:
-                self.hex_grid = json.load(file)
+                self.layers[self.current_layer] = json.load(file)
                 self.update_image()
 
     def import_image(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if file_path:
             try:
-                # Create a new window for color adjustment with consistent styling
-                color_adjust_window = Toplevel(self.root)
-                color_adjust_window.title("Color Adjustment")
-                color_adjust_window.configure(bg='#2B2B2B')  # Match the background color
-                self.center_window(color_adjust_window)
+                # Open a window for color adjustment
+                self.color_adjust_window = Toplevel(self.root)  # Set as instance attribute
+                self.color_adjust_window.title("Color Adjustment")
+                self.color_adjust_window.configure(bg='#2B2B2B')
+                self.center_window(self.color_adjust_window)
 
-                # Label for color count input
-                Label(color_adjust_window, text="Enter number of colors:", 
-                    fg='white', bg='#2B2B2B').pack(pady=5)
-
-                # Entry for color count with consistent styling
+                Label(self.color_adjust_window, text="Enter number of colors:", fg='white', bg='#2B2B2B').pack(pady=5)
                 self.color_count_var = StringVar(value=str(self.n_colors))
-                color_count_entry = Entry(color_adjust_window, textvariable=self.color_count_var, 
-                                        bg='#404040', fg='white')
+                color_count_entry = Entry(self.color_adjust_window, textvariable=self.color_count_var, bg='#404040', fg='white')
                 color_count_entry.pack(pady=5)
 
-                def confirm_color_count():
-                    try:
-                        color_count = int(self.color_count_var.get())
-                        if 1 <= color_count <= 256:
-                            self.n_colors = color_count
-                            print(f"Attempting to process image at path: {file_path}")
-                            print(f"Grid dimensions: {self.grid_width}x{self.grid_height}")
-                            print(f"Color count: {self.n_colors}")
-                            processed_img, self.hex_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
-                            self.photo = ImageTk.PhotoImage(processed_img)
-                            self.canvas.delete("all")
-                            self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
-                            color_adjust_window.destroy()
-                        else:
-                            raise ValueError("Color count must be between 1 and 256")
-                    except ValueError as e:
-                        messagebox.showerror("Error", str(e))
-
-                # Buttons with consistent styling
-                Button(color_adjust_window, text="Confirm", command=confirm_color_count, 
-                    fg='white', bg='#2B2B2B').pack(side="left", padx=5)
-                Button(color_adjust_window, text="Cancel", command=color_adjust_window.destroy, 
-                    fg='white', bg='#2B2B2B').pack(side="left", padx=5)
+                # Use lambda to pass self and file_path to confirm_color_count
+                Button(self.color_adjust_window, text="Confirm", command=lambda: self.confirm_color_count(file_path), fg='white', bg='#2B2B2B').pack(side="left", padx=5)
+                Button(self.color_adjust_window, text="Cancel", command=self.color_adjust_window.destroy, fg='white', bg='#2B2B2B').pack(side="left", padx=5)
 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 messagebox.showerror("Error", f"Failed to import image: {e}")
-    def center_window(self, window):
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        window_width = window.winfo_reqwidth()
-        window_height = window.winfo_reqheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        window.geometry(f"+{x}+{y}")
 
-    def run(self):
-        self.root.mainloop()
+    def confirm_color_count(self, file_path):
+        try:
+            color_count = int(self.color_count_var.get())
+            if 1 <= color_count <= 256:
+                self.n_colors = color_count
+                processed_img, new_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
+                # Update the current layer
+                self.layers[self.current_layer] = new_grid
+                self.update_image()
+                # Since color_adjust_window is not defined here, we need to make it accessible
+                # Assuming it's defined in the import_image method and passed through lambda
+                getattr(self, 'color_adjust_window', None).destroy() if hasattr(self, 'color_adjust_window') else None
+            else:
+                raise ValueError("Color count must be between 1 and 256")
+        except ValueError as e:
+            messagebox.showerror("Error", str(e))
 
+                
 # Example usage
 editor = VisualEditor()
 editor.run()
