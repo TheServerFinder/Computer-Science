@@ -91,6 +91,7 @@ class VisualEditor:
         self.redo_stack = []
         self.layers = []  # Initialize as empty list
         self.current_layer = 0
+        self.n_colors = 5  # Default number of colors for clustering
 
         self.root.withdraw()
         self.setup_menu()
@@ -279,6 +280,7 @@ class VisualEditor:
         # Now you can call update_image since self.opacity_slider is defined
         self.update_image()
         
+        # Bind mouse events
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<Button-3>", self.on_right_click)
         self.canvas.bind("<B1-Motion>", self.on_draw)
@@ -578,12 +580,8 @@ class VisualEditor:
         self.center_window(print_window)
         print_window.configure(bg='#2B2B2B')
         
-        text = Text(print_window, wrap="none", bg='#404040', fg='white')
-        scrollbar = Scrollbar(print_window, command=text.yview)
-        text.config(yscrollcommand=scrollbar.set)
-        
+        text = Text(print_window, wrap="none", bg='#404040', fg='white')        
         text.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
         
         text.insert("1.0", "{")
         for row in self.layers[self.current_layer]:
@@ -609,7 +607,7 @@ class VisualEditor:
         if file_path:
             try:
                 # Open a window for color adjustment
-                self.color_adjust_window = Toplevel(self.root)  # Set as instance attribute
+                self.color_adjust_window = Toplevel(self.root)
                 self.color_adjust_window.title("Color Adjustment")
                 self.color_adjust_window.configure(bg='#2B2B2B')
                 self.center_window(self.color_adjust_window)
@@ -633,18 +631,125 @@ class VisualEditor:
             color_count = int(self.color_count_var.get())
             if 1 <= color_count <= 256:
                 self.n_colors = color_count
-                processed_img, new_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
-                # Update the current layer
-                self.layers[self.current_layer] = new_grid
-                self.update_image()
-                # Since color_adjust_window is not defined here, we need to make it accessible
-                # Assuming it's defined in the import_image method and passed through lambda
+                
+                # Close the color adjustment window before processing
                 getattr(self, 'color_adjust_window', None).destroy() if hasattr(self, 'color_adjust_window') else None
+                
+                # Create a loading bar with text
+                self.loading_window = Toplevel(self.root)
+                print("Setting up loading window")
+                self.loading_window.title("Loading Image")
+                self.loading_window.geometry("300x150")
+                self.center_window(self.loading_window)
+                self.loading_window.grab_set()
+                self.loading_window.configure(bg='#333333')  # Dark grey background for the loading window
+                
+                # Label for the loading message
+                Label(self.loading_window, text="Processing Image...", fg='white', bg='#333333').pack(pady=10)
+                
+                # Style for the progress bar
+                style = ttk.Style()
+                print("Configuring progress bar")
+                style.theme_use('clam')  # or 'alt', 'default', 'classic' depending on your OS
+                style.configure("blue.Horizontal.TProgressbar", troughcolor='#333333', background='#0000FF', bordercolor='#333333')
+                
+                # Progress bar
+                self.progress = ttk.Progressbar(self.loading_window, orient="horizontal", length=200, mode="determinate", style="blue.Horizontal.TProgressbar")
+                self.progress.pack(pady=10)
+                
+                # Progress label
+                self.progress_label = Label(self.loading_window, text="0%", fg='white', bg='#333333')
+                self.progress_label.pack(pady=5)
+                
+                # Ensure the window is on top and visible
+                self.loading_window.attributes('-topmost', True)
+                self.loading_window.update_idletasks()
+                self.loading_window.deiconify()  # Make sure the window is not minimized
+                
+                # Process the image in the main window to update the UI
+                self.root.after(0, lambda: self.process_image(file_path))
             else:
                 raise ValueError("Color count must be between 1 and 256")
         except ValueError as e:
             messagebox.showerror("Error", str(e))
 
+    def process_image(self, file_path):
+        with Image.open(file_path) as img:
+            img = img.convert('RGB')
+            # Remove grid if exists
+            img = remove_grid(img)
+            # Resize image to match grid size for better quality, using LANCZOS
+            desired_size = (self.grid_width * 20, self.grid_height * 20)
+            img = img.resize(desired_size, Image.LANCZOS)
+            
+            new_img = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20))
+            draw = ImageDraw.Draw(new_img)
+            
+            total_pixels = self.grid_width * self.grid_height
+            for i in range(self.grid_height):
+                for j in range(self.grid_width):
+                    left = j * 20
+                    top = i * 20
+                    right = left + 20 if j < self.grid_width - 1 else img.width
+                    bottom = top + 20 if i < self.grid_height - 1 else img.height
+
+                    block = img.crop((left, top, right, bottom))
+                    block_array = np.array(block).reshape(-1, 3)
+                    
+                    if len(set(map(tuple, block_array))) > self.n_colors:
+                        kmeans = KMeans(n_clusters=self.n_colors, random_state=0).fit(block_array)
+                        block_reduced = kmeans.cluster_centers_[kmeans.labels_].astype(np.uint8)
+                    else:
+                        block_reduced = block_array
+
+                    color_counts = Counter(map(tuple, block_reduced))
+                    chosen_color = max(color_counts, key=color_counts.get)
+                    
+                    # Update the hex grid directly
+                    if len(self.layers) > self.current_layer:
+                        self.layers[self.current_layer][i][j] = f'#{chosen_color[0]:02x}{chosen_color[1]:02x}{chosen_color[2]:02x}'
+                    
+                    # Draw the rectangle directly on the image
+                    draw.rectangle([left, top, right, bottom], fill=tuple(chosen_color))
+                    
+                    # Update the progress bar and label
+                    progress_value = int(((i * self.grid_width + j + 1) / total_pixels) * 100)
+                    self.progress['value'] = progress_value
+                    self.progress_label.config(text=f"{progress_value}%")
+                    self.loading_window.update_idletasks()
+            
+            # Update the canvas with the new image
+            self.photo = ImageTk.PhotoImage(new_img)
+            self.canvas.delete("all")
+            self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+            
+            # Close the loading window
+            self.loading_window.destroy()
+            self.update_image()
+    def create_hex_grid_from_image(self, img):
+        color_rows = []
+        for i in range(self.grid_height):
+            row_colors = []
+            for j in range(self.grid_width):
+                left, top = j * self.segment_width, i * self.segment_height
+                right = min(left + self.segment_width, img.width)
+                bottom = min(top + self.segment_height, img.height)
+                
+                block = img.crop((left, top, right, bottom))
+                block_array = np.array(block).reshape(-1, 3)
+                
+                if len(set(map(tuple, block_array))) > self.n_colors:  
+                    kmeans = KMeans(n_clusters=self.n_colors, random_state=0).fit(block_array)
+                    block_reduced = kmeans.cluster_centers_[kmeans.labels_].astype(np.uint8)
+                else:
+                    block_reduced = block_array  
+
+                color_counts = Counter(map(tuple, block_reduced))
+                chosen_color = max(color_counts, key=color_counts.get)
+                hex_color = f'#{chosen_color[0]:02x}{chosen_color[1]:02x}{chosen_color[2]:02x}'
+                row_colors.append(hex_color)
+            color_rows.append(row_colors)
+        return color_rows
                 
 # Example usage
 editor = VisualEditor()
