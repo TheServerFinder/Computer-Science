@@ -1,18 +1,126 @@
-from PIL import Image, ImageDraw, ImageOps, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 import numpy as np
-from scipy.cluster.vq import kmeans2, whiten
 from sklearn.cluster import KMeans
 from collections import Counter
-from tkinter import Tk, Label, Button, Canvas, colorchooser, simpledialog, messagebox, filedialog, Toplevel, Text, Scrollbar, StringVar, Entry, Frame
+from tkinter import Tk, Label, Button, Canvas, colorchooser, simpledialog, messagebox, filedialog, Toplevel, Text, Scrollbar, StringVar, Entry, Frame, IntVar, Checkbutton
 import json
+import cv2
 
-def quantize_colors(block_array, n_colors):
-    whitened = whiten(block_array)
-    centroids, labels = kmeans2(whitened, n_colors, minit='points')
-    block_reduced = centroids[labels] * np.std(block_array, axis=0) + np.mean(block_array, axis=0)
-    return block_reduced.astype(np.uint8)
+from PIL import Image, ImageDraw, ImageFilter
+import numpy as np
+from sklearn.cluster import KMeans
+from collections import Counter
+import cv2
+
+def remove_grid(image):
+    # Convert image to numpy array for OpenCV operations
+    img_array = np.array(image)
+    
+    # Convert to grayscale for easier edge detection
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    
+    # Apply Gaussian blur to reduce noise before edge detection
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Use Canny Edge Detection to find edges, which should include grid lines
+    edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
+    
+    # Find lines with Hough Line Transform, adjusting parameters for better detection
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=5)
+    
+    if lines is None:
+        return image  # No lines detected, return original image
+
+    # Create a mask for lines
+    mask = np.zeros_like(img_array)
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        cv2.line(mask, (x1, y1), (x2, y2), (255, 255, 255), 2)  # Increased thickness for better coverage
+
+    # Dilate the mask to connect broken lines
+    kernel = np.ones((3,3), np.uint8)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+    
+    # Remove lines from the original image with a stronger inpaint method
+    result = cv2.inpaint(img_array, mask[:,:,0], 5, cv2.INPAINT_TELEA)  # Increased radius for inpainting
+    
+    return Image.fromarray(result)
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    # Apply thresholding to create a binary image
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    
+    # Detect lines using Hough Line Transform
+    lines = cv2.HoughLinesP(binary, 1, np.pi/180, threshold=200, minLineLength=50, maxLineGap=10)
+    
+    if lines is None:
+        return image  # No lines detected, return original image
+
+    # Create a mask for lines
+    mask = np.zeros_like(np.array(image))
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        cv2.line(mask, (x1, y1), (x2, y2), (255, 255, 255), 1)
+
+    # Remove lines from the original image
+    result = cv2.inpaint(np.array(image), mask[:,:,0], 3, cv2.INPAINT_TELEA)
+    return Image.fromarray(result)
 
 def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
+    with Image.open(image_path) as img:
+        img = img.convert('RGB')
+        
+        # Remove grid if exists
+        img = remove_grid(img)
+        
+        # Resize image to match grid size for better quality
+        desired_size = (grid_width * 20, grid_height * 20)
+        img = img.resize(desired_size, Image.LANCZOS)
+
+        segment_width = img.width / grid_width
+        segment_height = img.height / grid_height
+
+        color_rows = []
+        for i in range(grid_height):
+            row_colors = []
+            for j in range(grid_width):
+                left = int(j * segment_width)
+                top = int(i * segment_height)
+                right = int((j + 1) * segment_width) if j < grid_width - 1 else img.width
+                bottom = int((i + 1) * segment_height) if i < grid_height - 1 else img.height
+
+                block = img.crop((left, top, right, bottom))
+                block_array = np.array(block).reshape(-1, 3)
+
+                if len(set(map(tuple, block_array))) > n_colors:
+                    block_reduced = quantize_colors(block_array, n_colors)
+                else:
+                    block_reduced = block_array
+
+                color_counts = Counter(map(tuple, block_reduced))
+                chosen_color = max(color_counts, key=color_counts.get)
+
+                hex_color = "#{:02x}{:02x}{:02x}".format(*chosen_color)
+                row_colors.append(hex_color)
+
+            color_rows.append(row_colors)
+
+        new_img = Image.new('RGB', (grid_width * 20, grid_height * 20))
+        draw = ImageDraw.Draw(new_img)
+        
+        for y, row in enumerate(color_rows):
+            for x, color in enumerate(row):
+                r = int(color[1:3], 16)
+                g = int(color[3:5], 16)
+                b = int(color[5:7], 16)
+                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
+
+        return new_img, color_rows
+
+def quantize_colors(block_array, n_colors):
+    kmeans = KMeans(n_clusters=n_colors, random_state=0).fit(block_array)
+    centroids = kmeans.cluster_centers_.astype(np.uint8)
+    labels = kmeans.predict(block_array)
+    return centroids[labels]
     with Image.open(image_path) as img:
         img = img.convert('RGB')
         img = img.resize((grid_width * 20, grid_height * 20), Image.LANCZOS)
@@ -380,22 +488,50 @@ class VisualEditor:
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if file_path:
             try:
-                color_count = simpledialog.askinteger("Color Adjustment", "Enter number of colors:", 
-                                                    initialvalue=self.n_colors, minvalue=1, maxvalue=256)
-                if color_count is not None:
-                    self.n_colors = color_count
-                    print(f"Attempting to process image at path: {file_path}")
-                    print(f"Grid dimensions: {self.grid_width}x{self.grid_height}")
-                    print(f"Color count: {self.n_colors}")
-                    processed_img, self.hex_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
-                    self.photo = ImageTk.PhotoImage(processed_img)
-                    self.canvas.delete("all")
-                    self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+                # Create a new window for color adjustment with consistent styling
+                color_adjust_window = Toplevel(self.root)
+                color_adjust_window.title("Color Adjustment")
+                color_adjust_window.configure(bg='#2B2B2B')  # Match the background color
+                self.center_window(color_adjust_window)
+
+                # Label for color count input
+                Label(color_adjust_window, text="Enter number of colors:", 
+                    fg='white', bg='#2B2B2B').pack(pady=5)
+
+                # Entry for color count with consistent styling
+                self.color_count_var = StringVar(value=str(self.n_colors))
+                color_count_entry = Entry(color_adjust_window, textvariable=self.color_count_var, 
+                                        bg='#404040', fg='white')
+                color_count_entry.pack(pady=5)
+
+                def confirm_color_count():
+                    try:
+                        color_count = int(self.color_count_var.get())
+                        if 1 <= color_count <= 256:
+                            self.n_colors = color_count
+                            print(f"Attempting to process image at path: {file_path}")
+                            print(f"Grid dimensions: {self.grid_width}x{self.grid_height}")
+                            print(f"Color count: {self.n_colors}")
+                            processed_img, self.hex_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
+                            self.photo = ImageTk.PhotoImage(processed_img)
+                            self.canvas.delete("all")
+                            self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+                            color_adjust_window.destroy()
+                        else:
+                            raise ValueError("Color count must be between 1 and 256")
+                    except ValueError as e:
+                        messagebox.showerror("Error", str(e))
+
+                # Buttons with consistent styling
+                Button(color_adjust_window, text="Confirm", command=confirm_color_count, 
+                    fg='white', bg='#2B2B2B').pack(side="left", padx=5)
+                Button(color_adjust_window, text="Cancel", command=color_adjust_window.destroy, 
+                    fg='white', bg='#2B2B2B').pack(side="left", padx=5)
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 messagebox.showerror("Error", f"Failed to import image: {e}")
-
     def center_window(self, window):
         screen_width = window.winfo_screenwidth()
         screen_height = window.winfo_screenheight()
