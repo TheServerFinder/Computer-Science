@@ -1,23 +1,111 @@
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageOps, ImageTk
 import numpy as np
+from scipy.cluster.vq import kmeans2, whiten
 from sklearn.cluster import KMeans
 from collections import Counter
 from tkinter import Tk, Label, Button, Canvas, colorchooser, simpledialog, messagebox, filedialog, Toplevel, Text, Scrollbar, StringVar, Entry, Frame
 import json
 
+def quantize_colors(block_array, n_colors):
+    whitened = whiten(block_array)
+    centroids, labels = kmeans2(whitened, n_colors, minit='points')
+    block_reduced = centroids[labels] * np.std(block_array, axis=0) + np.mean(block_array, axis=0)
+    return block_reduced.astype(np.uint8)
+
+def image_to_grid_print(image_path, grid_width, grid_height, n_colors=5):
+    with Image.open(image_path) as img:
+        img = img.convert('RGB')
+        img = img.resize((grid_width * 20, grid_height * 20), Image.LANCZOS)
+        
+        segment_width = img.width / grid_width
+        segment_height = img.height / grid_height
+
+        color_rows = []
+        for i in range(grid_height):
+            row_colors = []
+            for j in range(grid_width):
+                left = int(j * segment_width)
+                top = int(i * segment_height)
+                right = left + 20 if j < grid_width - 1 else img.width
+                bottom = top + 20 if i < grid_height - 1 else img.height
+
+                block = img.crop((left, top, right, bottom))
+                avg_color = np.mean(np.array(block), axis=(0, 1))
+                hex_color = "#{:02x}{:02x}{:02x}".format(int(avg_color[0]), int(avg_color[1]), int(avg_color[2]))
+                row_colors.append(hex_color)
+
+            color_rows.append(row_colors)
+
+        new_img = Image.new('RGB', (grid_width * 20, grid_height * 20))
+        draw = ImageDraw.Draw(new_img)
+        
+        for y, row in enumerate(color_rows):
+            for x, color in enumerate(row):
+                r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
+
+        return new_img, color_rows
+    with Image.open(image_path) as img:
+        img = img.convert('RGB')
+        
+        # Apply dithering to preserve detail
+        img = ImageOps.posterize(img, n_colors)
+        img = ImageOps.dither(img, 1)
+        
+        # Resize image to match grid size for better quality
+        desired_size = (grid_width * 20, grid_height * 20)
+        img = img.resize(desired_size, Image.LANCZOS)
+
+        segment_width = img.width / grid_width
+        segment_height = img.height / grid_height
+
+        color_rows = []
+        for i in range(grid_height):
+            row_colors = []
+            for j in range(grid_width):
+                left = int(j * segment_width)
+                top = int(i * segment_height)
+                right = int((j + 1) * segment_width) if j < grid_width - 1 else img.width
+                bottom = int((i + 1) * segment_height) if i < grid_height - 1 else img.height
+
+                block = img.crop((left, top, right, bottom))
+                block_array = np.array(block).reshape(-1, 3)
+
+                if len(set(map(tuple, block_array))) > n_colors:
+                    block_reduced = quantize_colors(block_array, n_colors)
+                else:
+                    block_reduced = block_array
+
+                color_counts = Counter(map(tuple, block_reduced))
+                chosen_color = max(color_counts, key=color_counts.get)
+
+                hex_color = "#{:02x}{:02x}{:02x}".format(*chosen_color)
+                row_colors.append(hex_color)
+
+            color_rows.append(row_colors)
+
+        new_img = Image.new('RGB', (grid_width * 20, grid_height * 20))
+        draw = ImageDraw.Draw(new_img)
+        
+        for y, row in enumerate(color_rows):
+            for x, color in enumerate(row):
+                r = int(color[1:3], 16)
+                g = int(color[3:5], 16)
+                b = int(color[5:7], 16)
+                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
+
+        return new_img, color_rows
+
 class VisualEditor:
     def __init__(self):
         self.root = Tk()
         self.root.title("Clarks Advanced Pixel Editor")
-        # Withdraw the main window initially
         self.root.withdraw()
         self.setup_initial_ui()
 
     def setup_initial_ui(self):
-        # Create a single dialog window for both width and height
         self.size_window = Toplevel(self.root)
         self.size_window.title("Grid Size")
-        # Center the size_window
         self.center_window(self.size_window)
         
         Label(self.size_window, text="Enter grid width:", fg='white', bg='#2B2B2B').grid(row=0, column=0)
@@ -32,7 +120,6 @@ class VisualEditor:
         Button(self.size_window, text="Confirm", command=self.confirm_size, fg='white', bg='#2B2B2B').grid(row=2, column=0, columnspan=2)
         
         self.size_window.configure(bg='#2B2B2B')
-        # Wait for the size window to be closed before proceeding
         self.root.wait_window(self.size_window)
 
     def confirm_size(self):
@@ -47,11 +134,9 @@ class VisualEditor:
                 self.hex_grid = self.create_blank_grid()
                 self.setup_gui()
                 
-                # New attributes for drawing tools
-                self.draw_color = "#000000"  # Default color for drawing
+                self.draw_color = "#000000"
                 self.drawing = False
-                self.tool = None  # Initialize tool to None
-                # Show the main window after confirmation
+                self.tool = None
                 self.root.deiconify()
             else:
                 raise ValueError
@@ -63,15 +148,15 @@ class VisualEditor:
     def create_blank_grid(self):
         return [["#FFFFFF" for _ in range(self.grid_width)] for _ in range(self.grid_height)]
 
+    def create_blank_grid(self):
+        return [["#FFFFFF" for _ in range(self.grid_width)] for _ in range(self.grid_height)]
+
     def setup_gui(self):
-        # Set the background of the UI to dark gray and text to white
         self.root.configure(bg='#2B2B2B')
         
-        # Create a frame for the black border
-        border_frame = Frame(self.root, bg='#2B2B2B', padx=40, pady=40)  # Adjust padx and pady for border width
+        border_frame = Frame(self.root, bg='#2B2B2B', padx=40, pady=40)
         border_frame.pack(fill='both', expand=True)
         
-        # Create a white frame inside the black border
         inner_frame = Frame(border_frame, bg='white')
         inner_frame.pack(fill='both', expand=True)
         
@@ -88,7 +173,6 @@ class VisualEditor:
         self.color_label = Label(self.root, text="Color Picked: ", fg='white', bg='#2B2B2B')
         self.color_label.pack()
         
-        # Additional controls
         control_frame = Frame(self.root, bg='#2B2B2B')
         Button(control_frame, text="Print Hex Grid", command=self.print_hex_grid, fg='white', bg='#2B2B2B').pack(side="left")
         Button(control_frame, text="Save Changes", command=self.save_changes, fg='white', bg='#2B2B2B').pack(side="left")
@@ -96,7 +180,6 @@ class VisualEditor:
         Button(control_frame, text="Import Image", command=self.import_image, fg='white', bg='#2B2B2B').pack(side="left")
         control_frame.pack()
         
-        # Tool selection
         tool_frame = Frame(self.root, bg='#2B2B2B')
         self.pencil_button = Button(tool_frame, text="Pencil", command=lambda: self.set_tool("pencil"), fg='white', bg='#2B2B2B')
         self.pencil_button.pack(side="left")
@@ -104,14 +187,12 @@ class VisualEditor:
         self.erase_button.pack(side="left")
         tool_frame.pack()
         
-        # Color selection
         color_frame = Frame(self.root, bg='#2B2B2B')
         Button(color_frame, text="Choose Color", command=self.choose_color, fg='white', bg='#2B2B2B').pack(side="left")
         color_frame.pack()
 
     def update_image(self):
-        # Create a new image based on the grid
-        new_img = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20), color='white')  # Ensure white background
+        new_img = Image.new('RGB', (self.grid_width * 20, self.grid_height * 20), color='white')
         draw = ImageDraw.Draw(new_img)
         
         for y, row in enumerate(self.hex_grid):
@@ -119,21 +200,13 @@ class VisualEditor:
                 r = int(color[1:3], 16)
                 g = int(color[3:5], 16)
                 b = int(color[5:7], 16)
-                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b), outline=(r, g, b))  # Set outline to match fill
+                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b), outline=None)
         
-        # Convert to PhotoImage for Tkinter
         self.photo = ImageTk.PhotoImage(new_img)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
         
-        # Draw hex grid on top
-        for y, row in enumerate(self.hex_grid):
-            for x, color in enumerate(row):
-                r = int(color[1:3], 16)
-                g = int(color[3:5], 16)
-                b = int(color[5:7], 16)
-                draw.rectangle([x*20, y*20, (x+1)*20, (y+1)*20], fill=(r, g, b))
-        
+        # Convert to PhotoImage for Tkinter
         self.photo = ImageTk.PhotoImage(new_img)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
@@ -307,57 +380,29 @@ class VisualEditor:
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if file_path:
             try:
-                # Load the image
-                img = Image.open(file_path).convert('RGB')
-                # Calculate segment sizes
-                self.segment_width = img.width // self.grid_width
-                self.segment_height = img.height // self.grid_height
-                # Create the hex grid using the original logic
-                self.hex_grid = self.create_hex_grid_from_image(img)
-                # Update the canvas to reflect the new grid
-                self.update_image()
+                color_count = simpledialog.askinteger("Color Adjustment", "Enter number of colors:", 
+                                                    initialvalue=self.n_colors, minvalue=1, maxvalue=256)
+                if color_count is not None:
+                    self.n_colors = color_count
+                    print(f"Attempting to process image at path: {file_path}")
+                    print(f"Grid dimensions: {self.grid_width}x{self.grid_height}")
+                    print(f"Color count: {self.n_colors}")
+                    processed_img, self.hex_grid = image_to_grid_print(file_path, self.grid_width, self.grid_height, self.n_colors)
+                    self.photo = ImageTk.PhotoImage(processed_img)
+                    self.canvas.delete("all")
+                    self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 messagebox.showerror("Error", f"Failed to import image: {e}")
 
-    def create_hex_grid_from_image(self, img):
-        color_rows = []
-        for i in range(self.grid_height):
-            row_colors = []
-            for j in range(self.grid_width):
-                left, top = j * self.segment_width, i * self.segment_height
-                right = min(left + self.segment_width, img.width)
-                bottom = min(top + self.segment_height, img.height)
-                
-                block = img.crop((left, top, right, bottom))
-                block_array = np.array(block).reshape(-1, 3)
-                
-                if len(set(map(tuple, block_array))) > self.n_colors:  
-                    kmeans = KMeans(n_clusters=self.n_colors, random_state=0).fit(block_array)
-                    block_reduced = kmeans.cluster_centers_[kmeans.labels_].astype(np.uint8)
-                else:
-                    block_reduced = block_array  
-
-                color_counts = Counter(map(tuple, block_reduced))
-                chosen_color = max(color_counts, key=color_counts.get)
-                hex_color = f'#{chosen_color[0]:02x}{chosen_color[1]:02x}{chosen_color[2]:02x}'
-                row_colors.append(hex_color)
-            color_rows.append(row_colors)
-        return color_rows
-
     def center_window(self, window):
-        # Get the screen width and height
         screen_width = window.winfo_screenwidth()
         screen_height = window.winfo_screenheight()
-        
-        # Get the window width and height
         window_width = window.winfo_reqwidth()
         window_height = window.winfo_reqheight()
-        
-        # Calculate position for centering
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
-        
-        # Set the window's position
         window.geometry(f"+{x}+{y}")
 
     def run(self):
