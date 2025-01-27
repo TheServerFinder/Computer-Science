@@ -7,7 +7,7 @@ import time
 import asyncio
 
 
-TOKEN = 'MTMzMzIxOTUwMzM0NTIzODE1Ng.Gn2l38.w5XY8H4VeAhvqsTN89TnO7Eg60u0SapTqPO3JI'
+TOKEN = ''
 CHANNEL_ID = 1333441360639819796
 DATACHANNEL_ID = 1333455271477117029  # Example ID for the data channel
 
@@ -182,7 +182,7 @@ class App:
         return False
 
     async def send_connection_message(self):
-        await self.send_to_discord(f"{self.username.get()} has connected!")
+        await self.send_to_discord("connection success!")
 
     async def send_to_discord(self, message):
         channel = client.get_channel(CHANNEL_ID)
