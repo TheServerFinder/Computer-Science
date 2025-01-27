@@ -18,7 +18,7 @@ client = discord.Client(intents=intents)
 class App:
     def __init__(self, master):
         self.master = master
-        master.title("Discord Chat Client")
+        master.title("Ethereon")
         self.center_window(master, 400, 500)  # Center the window on the screen
         master.configure(bg='#333333')  # Dark gray background
         
@@ -64,7 +64,10 @@ class App:
 
             result = tk.StringVar()
             def confirm_username():
-                result.set(username_entry.get() or "Anonymous")
+                entered_name = username_entry.get()
+                if not entered_name:
+                    entered_name = "Anonymous0"
+                result.set(entered_name)
                 username_window.destroy()
 
             tk.Button(username_window, text="Confirm", command=confirm_username, bg='#444444', fg='white').pack(pady=5)
@@ -73,16 +76,32 @@ class App:
             return result.get()
 
     async def check_username_uniqueness(self):
-        username = self.username.get()
-        print(f"Checking if username {username} is unique")
-        if not await self.is_username_unique(username):
+        base_name = self.username.get()
+        if base_name.lower().startswith("anonymous") and base_name != "Anonymous":
+            counter = 1
+            while not await self.is_username_unique(base_name):
+                base_name = f"Anonymous{counter}"
+                counter += 1
+            self.username.set(base_name)
+            self.chat_area.config(state=tk.NORMAL)
+        elif base_name == "Anonymous" and not await self.is_username_unique("Anonymous"):
+            counter = 1
+            while not await self.is_username_unique(f"Anonymous{counter}"):
+                counter += 1
+            base_name = f"Anonymous{counter}"
+            self.username.set(base_name)
+            self.chat_area.config(state=tk.NORMAL)
+        elif not await self.is_username_unique(base_name):
             self.username.set("")
             messagebox.showerror("Error", "Username already taken. Please choose another.")
+            self.master.after(1, self.get_username_async)  # Schedule the username selection again
         else:
             self.chat_area.config(state=tk.NORMAL)
-            self.chat_area.insert(tk.END, f"Username {username} is unique.\n")
-            self.chat_area.config(state=tk.DISABLED)
-            self.chat_area.see(tk.END)
+            self.chat_area.insert(tk.END, f"Username {base_name} is unique.\n")
+
+        self.chat_area.config(state=tk.DISABLED)
+        self.chat_area.see(tk.END)
+        self.message_entry.config(state=tk.NORMAL)
 
     async def is_username_unique(self, username):
         try:
@@ -117,23 +136,25 @@ class App:
         self.chat_area.tag_config('my_message', foreground='yellow')  # Configure tag for user's messages
 
         # Message entry
-        self.message_entry = tk.Entry(self.master, width=45, bg='#444444', fg='white')
+        self.message_entry = tk.Entry(self.master, width=45, bg='#444444', fg='white', state=tk.DISABLED)  # Start disabled
         self.message_entry.pack(expand=True)
         self.message_entry.bind('<Return>', lambda event: self.send_message())  # Bind enter key to send
 
         # Send button
         send_button = tk.Button(self.master, text="Send", command=self.send_message, bg='#555555', fg='white')
         send_button.pack(expand=True, pady=5)
-
+        
     def send_message(self):
-        message = self.message_entry.get()
-        if message:
-            asyncio.run_coroutine_threadsafe(self.send_to_discord(message), client.loop)
-            self.message_entry.delete(0, tk.END)  # Clear the entry field after sending
-            # Insert the message into chat area with the username
-            self.chat_area.config(state=tk.NORMAL)
-            self.chat_area.config(state=tk.DISABLED)
-            self.chat_area.see(tk.END)
+        if self.username.get() and self.message_entry['state'] == tk.NORMAL:
+            message = self.message_entry.get()
+            if message:
+                asyncio.run_coroutine_threadsafe(self.send_to_discord(message), client.loop)
+                self.message_entry.delete(0, tk.END)
+                self.chat_area.config(state=tk.NORMAL)
+                self.chat_area.config(state=tk.DISABLED)
+                self.chat_area.see(tk.END)
+        else:
+            messagebox.showerror("Error", "Please set a unique username to chat.")
 
     def delay_send_connection_message(self):
         while not client.is_ready() or not self.username.get():
