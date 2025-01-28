@@ -7,17 +7,22 @@ import time
 import re 
 import webbrowser
 import sys
+from datetime import datetime
 
-VERSION = "1.0.1"  # Current client version
+VERSION = "1.0.9"  # Current client version
 
 TOKEN = ''
 CHANNEL_ID = 1333441360639819796
 PASSWORD_HANDLING_CHANNEL_ID = 1333512530131423352
-UPDATE_CHANNEL_ID = 1234567890  # New channel for version updates
+UPDATE_CHANNEL_ID = 1333564873984049344  # New channel for version updates
+COMMAND_CHANNEL_ID = 1333637833289633802  # New channel for commands
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+
+# Global variable to check if update is needed
+update_needed = False
 
 class App:
     def __init__(self, master):
@@ -75,6 +80,11 @@ class App:
         
         main_window = self.master.winfo_children()[0] if self.master.winfo_children() else None
         
+        # Check if username length is between 1 and 30 characters
+        if not (1 <= len(username) <= 30):
+            messagebox.showerror("Error", "Username must be between 1 and 30 characters long.")
+            return
+
         if not re.match(r'^[a-zA-Z0-9]+$', username):
             messagebox.showerror("Error", "Username can only contain letters and numbers.")
             return
@@ -128,9 +138,16 @@ class App:
         self.chat_area = scrolledtext.ScrolledText(self.master, wrap=tk.WORD, width=45, height=25, bg='#444444', fg='white', padx=5, pady=5)
         self.chat_area.pack(expand=True, fill=tk.BOTH)  
         self.chat_area.config(state=tk.DISABLED)
-        self.chat_area.tag_config('my_message', background='#1E90FF', foreground='white', relief=tk.FLAT, borderwidth=0, spacing1=2, spacing3=2)  # Flat relief, no border, with padding
-        self.chat_area.tag_config('separator', background='#444444', foreground='#444444')  # A tag for a separator line
-        self.chat_area.tag_config('other_message', background='#D3D3D3', foreground='black', relief=tk.FLAT, borderwidth=0, spacing1=2, spacing3=2)  # Flat relief, no border, with padding
+        
+        # Tag configurations
+        self.chat_area.tag_config('my_message', background='#1E90FF', foreground='white', relief=tk.FLAT, borderwidth=0, spacing1=2, spacing3=2)
+        self.chat_area.tag_config('separator', background='#444444', foreground='#444444')
+        self.chat_area.tag_config('other_message', background='#D3D3D3', foreground='black', relief=tk.FLAT, borderwidth=0, spacing1=2, spacing3=2)
+        self.chat_area.tag_config('alert', background='yellow', foreground='black')
+        self.chat_area.tag_config('link', foreground="blue", underline=True)
+
+        # New tag for system messages
+        self.chat_area.tag_config('system', background='#555555', foreground='white')
 
         self.message_entry = tk.Entry(self.master, width=45, bg='#444444', fg='white')
         self.message_entry.pack(expand=True, fill=tk.X, padx=5, pady=5)
@@ -139,61 +156,119 @@ class App:
         send_button = tk.Button(self.master, text="Send", command=self.send_message, bg='#555555', fg='white')
         send_button.pack(expand=True, pady=5)
 
+    def send_system_message(self, message):
+        if hasattr(self, 'chat_area'):
+            self.chat_area.config(state=tk.NORMAL)
+            self.chat_area.insert(tk.END, f"{message}\n", 'system')
+            self.chat_area.insert(tk.END, "-\n", 'separator')
+            self.chat_area.config(state=tk.DISABLED)
+            self.chat_area.see(tk.END)
+
     def send_message(self):
         if self.username.get():
             message = self.message_entry.get()
             if message:
+                if len(message) > 750:
+                    messagebox.showerror("Error", "Message exceeds the 750 character limit.")
+                    return
+                
                 asyncio.run_coroutine_threadsafe(self.send_to_discord(message), client.loop)
                 self.message_entry.delete(0, tk.END)
 
     def start_chat_session(self):
-        threading.Thread(target=self.delay_send_connection_message).start()
+        asyncio.run_coroutine_threadsafe(self.send_system_event("join"), client.loop)
 
-    def delay_send_connection_message(self):
-        while not client.is_ready() or not self.username.get():
-            time.sleep(1)
-        asyncio.run_coroutine_threadsafe(self.send_connection_message(), client.loop)
-        print("Connection message delay thread completed.")
+    def user_left(self):
+        print("User left method called")
+        asyncio.run_coroutine_threadsafe(self.send_system_event("leave"), client.loop)
+        print("System leave event sent")
 
-    async def send_connection_message(self):
-        await self.send_to_discord("connection success!")
+    async def send_system_event(self, event_type):
+        channel = client.get_channel(CHANNEL_ID)
+        if channel:
+            try:
+                if event_type == "join":
+                    await channel.send(f"[SYSTEM] {self.username.get()} has joined the chat.")
+                elif event_type == "leave":
+                    await channel.send(f"[SYSTEM] {self.username.get()} has left the chat.")
+            except discord.errors.HTTPException as e:
+                print(f"Failed to send system event: {e}")
 
     async def send_to_discord(self, message):
         channel = client.get_channel(CHANNEL_ID)
         if channel:
             try:
+                print(f"Attempting to send: [RELAY] {self.username.get()}: {message}")
                 await channel.send(f"[RELAY] {self.username.get()}: {message}")
-                print(f"Message sent to discord: [RELAY] {self.username.get()}: {message}")
+                print("Message sent successfully")
             except discord.errors.HTTPException as e:
                 print(f"Failed to send message: {e}")
+        else:
+            print("Channel not found")
+
+    async def check_update_status(self):
+        update_channel = client.get_channel(UPDATE_CHANNEL_ID)
+        if update_channel:
+            async for message in update_channel.history(limit=1):
+                try:
+                    latest_version, download_link = message.content.split()
+                    # Convert versions to tuple for comparison if they are in 'x.y.z' format
+                    current_version_tuple = tuple(map(int, VERSION.split('.')))
+                    latest_version_tuple = tuple(map(int, latest_version.split('.')))
+                    
+                    if current_version_tuple < latest_version_tuple:
+                        result = messagebox.showinfo("Update Required", 
+                                                    f"An update is available ({latest_version}). The application will now close.",
+                                                    detail="Click OK to update and close the application.")
+                        if result == 'ok':  # This condition will always be true for showinfo, but it's here for clarity
+                            webbrowser.open(download_link)
+                            self.master.quit()  # Force quit the application
+                except ValueError:
+                    # Handle the case where the message content might not be in the expected format
+                    print(f"Error parsing update message: {message.content}")
+        else:
+            print("Update channel not found.")
 
     def on_closing(self):
+        global update_needed  # Declare update_needed as global
         if self.username.get():
-            print("Application is exiting, attempting to clean up...")
+            self.user_left()
+        if update_needed:
+            update_needed = False  # Reset on closing if update was triggered
         self.master.quit()
 
 async def check_version():
+    global update_needed
     update_channel = client.get_channel(UPDATE_CHANNEL_ID)
     if update_channel:
         async for message in update_channel.history(limit=1):
-            latest_version, download_link = message.content.split()
-            if VERSION < latest_version:
-                result = tk.messagebox.showinfo("Update Required", f"A new version is available ({latest_version}). Please update to continue using the application.", 
+            try:
+                latest_version, download_link = message.content.split()
+                current_version_tuple = tuple(map(int, VERSION.split('.')))
+                latest_version_tuple = tuple(map(int, latest_version.split('.')))
+                
+                if current_version_tuple < latest_version_tuple:
+                    update_needed = True
+                    result = messagebox.showinfo("Update Required", 
+                                                f"An update is available ({latest_version}). The application will now close.",
                                                 detail="Click OK to update and close the application.")
-                if result == 'ok':  # This condition will always be true for showinfo, but it's here for clarity
-                    webbrowser.open(download_link)
+                    if result == 'ok':  # This condition will always be true for showinfo, but it's here for clarity
+                        webbrowser.open(download_link)
+                        app.master.quit()  # Force quit the application
+            except ValueError:
+                print(f"Error parsing update message: {message.content}")
     else:
         print("Update channel not found.")
 
 @client.event
 async def on_ready():
-    await check_version()
+    await check_version()  # Check for updates once at startup
     if hasattr(app, 'chat_area'):  
         app.chat_area.config(state=tk.NORMAL)
-        app.chat_area.insert(tk.END, f"Successfully connected to Etheron API.\n")
+        app.chat_area.insert(tk.END, f"Successfully connected to Etheron API.\n", 'system')
         app.chat_area.config(state=tk.DISABLED)
         app.chat_area.see(tk.END)
-        print("Bot is ready and online.")
+        print("Bot is ready and connected!")
 
 @client.event
 async def on_disconnect():
@@ -201,7 +276,30 @@ async def on_disconnect():
 
 @client.event
 async def on_message(message):
+    # Handle commands (case-insensitive)
+    if message.channel.id == COMMAND_CHANNEL_ID and not message.author.bot:
+        content = message.content.lower()
+        if content.startswith('!help'):
+            await message.channel.send("**Available commands:**\n- `!help`: Lists all available commands.\n- `!update`: Forces all clients to check for updates.")
+        elif content.startswith('!update'):
+            await message.channel.send("All clients will now check for updates.")
+            asyncio.run_coroutine_threadsafe(update_all_clients(), client.loop)
+        return  # Return to avoid processing these as regular messages
+    
     if message.author == client.user:
+        if message.content.startswith("[SYSTEM]"):
+            if hasattr(app, 'chat_area'):
+                try:
+                    app.chat_area.config(state=tk.NORMAL)
+                    system_message = message.content.split('[SYSTEM] ', 1)[1]
+                    app.chat_area.insert(tk.END, f"{system_message}\n", 'system')
+                    app.chat_area.insert(tk.END, "-\n", 'separator')
+                    app.chat_area.config(state=tk.DISABLED)
+                    app.chat_area.see(tk.END)
+                except Exception as e:
+                    print(f"Error updating chat area with system message: {e}")
+                    app.chat_area.config(state=tk.DISABLED)
+            return
         if not message.content.startswith("[RELAY]"):
             return 
     
@@ -210,15 +308,40 @@ async def on_message(message):
         if content.startswith("[RELAY] "):
             name, content = content[8:].split(': ', 1) 
             if hasattr(app, 'chat_area'):
-                app.chat_area.config(state=tk.NORMAL)
-                if name == app.username.get():
-                    app.chat_area.insert(tk.END, f"{name}: {content}\n", 'my_message')
-                else:
-                    app.chat_area.insert(tk.END, f"{name}: {content}\n", 'other_message')
-                # Insert a separator
-                app.chat_area.insert(tk.END, "-\n", 'separator')
-                app.chat_area.config(state=tk.DISABLED)
-                app.chat_area.see(tk.END)
+                try:
+                    app.chat_area.config(state=tk.NORMAL)
+                    
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    
+                    # Ensure the entire line is tagged
+                    if name != app.username.get():
+                        tag = 'other_message'
+                    else:
+                        tag = 'my_message'
+                    
+                    full_message = f"[{timestamp}] {name}: {content}\n"
+                    app.chat_area.insert(tk.END, full_message, tag)
+
+                    # Apply link formatting
+                    start_index = app.chat_area.index(tk.END + "-1l linestart")
+                    for m in re.finditer(r'https?://\S+', content):
+                        app.chat_area.tag_add('link', f"{start_index}+{len(f'[{timestamp}] {name}: ')+m.start()}c", 
+                                              f"{start_index}+{len(f'[{timestamp}] {name}: ')+m.end()}c")
+                        app.chat_area.tag_bind('link', '<Button-1>', lambda e, url=m.group(0): webbrowser.open(url))
+                    
+                    # Insert a separator
+                    app.chat_area.insert(tk.END, "-\n", 'separator')
+                    app.chat_area.config(state=tk.DISABLED)
+                    app.chat_area.see(tk.END)
+                    print(f"Message from {name}: {content} has been displayed")
+                except Exception as e:
+                    print(f"Error updating chat area: {e}")
+                    app.chat_area.config(state=tk.DISABLED)
+
+async def update_all_clients():
+    global update_needed
+    update_needed = False  # Reset before checking
+    await check_version()  # Check for updates manually
 
 def run_discord_client():
     def run():
