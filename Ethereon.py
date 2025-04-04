@@ -11,11 +11,13 @@ from datetime import datetime
 
 VERSION = "1.0.9"  # Current client version
 
-TOKEN = ''
+TOKEN = 'PRIVATE TOKEN'
 CHANNEL_ID = 1333441360639819796
 PASSWORD_HANDLING_CHANNEL_ID = 1333512530131423352
 UPDATE_CHANNEL_ID = 1333564873984049344  # New channel for version updates
-COMMAND_CHANNEL_ID = 1333637833289633802  # New channel for commands
+COMMAND_CHANNEL_ID = 1333637833289633802  # Command channel
+ROLE_MANAGEMENT_CHANNEL_ID = 1333874464773115967  # Channel ID for storing Tkinter admins
+DISCORD_ADMIN_ROLE_ID = 1333240107095949395  # ID for the Discord Admin role
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -172,7 +174,10 @@ class App:
                     messagebox.showerror("Error", "Message exceeds the 750 character limit.")
                     return
                 
-                asyncio.run_coroutine_threadsafe(self.send_to_discord(message), client.loop)
+                if message.startswith('!'):  # Check if it's a command
+                    asyncio.run_coroutine_threadsafe(self.execute_command(message), client.loop)
+                else:
+                    asyncio.run_coroutine_threadsafe(self.send_to_discord(message), client.loop)
                 self.message_entry.delete(0, tk.END)
 
     def start_chat_session(self):
@@ -237,6 +242,58 @@ class App:
             update_needed = False  # Reset on closing if update was triggered
         self.master.quit()
 
+    async def execute_command(self, command):
+        user = self.username.get().lower()
+        if await self.is_user_admin(user):
+            parts = command.split(' ', 1)
+            if len(parts) > 1:
+                cmd, args = parts[0], parts[1]
+                if cmd == '!admin':
+                    if await self.is_user_admin(args.lower()):
+                        self.send_system_message(f"{args} is already an admin.")
+                    else:
+                        await self.add_admin(args.lower())
+                        self.send_system_message(f"Set {args} to admin.")
+                elif cmd == '!removeadmin':
+                    if await self.is_user_admin(args.lower()):
+                        await self.remove_admin(args.lower())
+                        self.send_system_message(f"Removed {args} from admin.")
+                    else:
+                        self.send_system_message(f"{args} is not an admin.")
+                elif cmd == '!help':
+                    self.send_system_message("**Available commands:**\n- `!help`: Lists all available commands.\n- `!update`: Forces all clients to check for updates.\n- `!admin <username>`: Adds user to admin list.\n- `!removeadmin <username>`: Removes user from admin list.")
+                else:
+                    # For any other commands, you might want to implement specific handling here
+                    self.send_system_message(f"Unknown command: {cmd}")
+            else:
+                if command == '!help':
+                    self.send_system_message("**Available commands:**\n- `!help`: Lists all available commands.\n- `!update`: Forces all clients to check for updates.\n- `!admin <username>`: Adds user to admin list.\n- `!removeadmin <username>`: Removes user from admin list.")
+                else:
+                    self.send_system_message(f"Command '{command}' requires an argument.")
+        else:
+            self.send_system_message(f"You do not have permission to execute commands.")
+
+    async def is_user_admin(self, username):
+        role_channel = client.get_channel(ROLE_MANAGEMENT_CHANNEL_ID)
+        if role_channel:
+            async for message in role_channel.history(limit=None):
+                if message.content.lower() == username:
+                    return True
+        return False
+
+    async def add_admin(self, username):
+        role_channel = client.get_channel(ROLE_MANAGEMENT_CHANNEL_ID)
+        if role_channel:
+            await role_channel.send(username)
+
+    async def remove_admin(self, username):
+        role_channel = client.get_channel(ROLE_MANAGEMENT_CHANNEL_ID)
+        if role_channel:
+            async for msg in role_channel.history(limit=None):
+                if msg.content.lower() == username:
+                    await msg.delete()
+                    return
+
 async def check_version():
     global update_needed
     update_channel = client.get_channel(UPDATE_CHANNEL_ID)
@@ -276,14 +333,34 @@ async def on_disconnect():
 
 @client.event
 async def on_message(message):
-    # Handle commands (case-insensitive)
     if message.channel.id == COMMAND_CHANNEL_ID and not message.author.bot:
         content = message.content.lower()
         if content.startswith('!help'):
-            await message.channel.send("**Available commands:**\n- `!help`: Lists all available commands.\n- `!update`: Forces all clients to check for updates.")
+            await message.channel.send("**Available commands:**\n- `!help`: Lists all available commands.\n- `!update`: Forces all clients to check for updates.\n- `!admin <username>`: Adds user to admin list.\n- `!removeadmin <username>`: Removes user from admin list.")
         elif content.startswith('!update'):
             await message.channel.send("All clients will now check for updates.")
             asyncio.run_coroutine_threadsafe(update_all_clients(), client.loop)
+        elif any(role.id == DISCORD_ADMIN_ROLE_ID for role in message.author.roles):  # Check if user has Discord Admin role
+            parts = content.split(' ', 1)
+            if len(parts) > 1:
+                cmd, args = parts[0], parts[1]
+                if cmd == '!admin':
+                    if await app.is_user_admin(args.lower()):
+                        await message.channel.send(f"{args} is already an admin.")
+                    else:
+                        await app.add_admin(args.lower())
+                        await message.channel.send(f"Set {args} to admin.")
+                elif cmd == '!removeadmin':
+                    if await app.is_user_admin(args.lower()):
+                        await app.remove_admin(args.lower())
+                        await message.channel.send(f"Removed {args} from admin.")
+                    else:
+                        await message.channel.send(f"{args} is not an admin.")
+                else:
+                    # For any other commands, you might want to implement specific handling here
+                    await message.channel.send(f"Unknown command: {cmd}")
+            else:
+                await message.channel.send("Command requires an argument.")
         return  # Return to avoid processing these as regular messages
     
     if message.author == client.user:
